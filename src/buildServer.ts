@@ -2,6 +2,7 @@ import fastify from 'fastify';
 import fastifyCors from '@fastify/cors';
 import fastifyIO from 'fastify-socket.io';
 import Redis from 'ioredis';
+
 import config from '../config';
 import constants from '../config/constants';
 
@@ -42,8 +43,27 @@ export async function buildServer() {
 		});
 	});
 
+	subscriber.subscribe(constants.CONNECTION_COUNT_UPDATED_CHANNEL, (err, count) => {
+		if (err) {
+			console.error(`Error subscribing to ${constants.CONNECTION_COUNT_UPDATED_CHANNEL}`);
+			return;
+		}
+
+		console.log(`${count} clients connected to ${constants.CONNECTION_COUNT_UPDATED_CHANNEL} channel`);
+	});
+
+	subscriber.on('message', (channel, text) => {
+		if (channel === constants.CONNECTION_COUNT_UPDATED_CHANNEL) {
+			app.io.emit(constants.CONNECTION_COUNT_UPDATED_CHANNEL, {
+				count: text,
+			});
+			return;
+		}
+	});
+
 	app.get('/healthcheck', () => {
 		return { status: 'ok', port: config.PORT };
 	});
+
 	return app;
 }
