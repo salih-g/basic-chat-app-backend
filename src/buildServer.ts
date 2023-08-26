@@ -2,6 +2,7 @@ import fastify from 'fastify';
 import fastifyCors from '@fastify/cors';
 import fastifyIO from 'fastify-socket.io';
 import Redis from 'ioredis';
+import closeWithGrace from 'close-with-grace';
 
 import config from '../config';
 import constants from '../config/constants';
@@ -13,6 +14,8 @@ if (!config.UPSTASH_REDIS_REST_URL) {
 
 const publisher = new Redis(config.UPSTASH_REDIS_REST_URL);
 const subscriber = new Redis(config.UPSTASH_REDIS_REST_URL);
+
+let connectedClients = 0;
 
 export async function buildServer() {
 	const app = fastify();
@@ -31,6 +34,7 @@ export async function buildServer() {
 
 	app.io.on('connection', async (io) => {
 		console.log('Client connected');
+		connectedClients++;
 
 		const incResult = await publisher.incr(constants.CONNECTION_COUNT_KEY);
 
@@ -38,6 +42,7 @@ export async function buildServer() {
 
 		io.on('disconnect', async () => {
 			console.log('Client disconnected');
+			connectedClients--;
 			const decrResult = await publisher.decr(constants.CONNECTION_COUNT_KEY);
 			await publisher.publish(constants.CONNECTION_COUNT_UPDATED_CHANNEL, String(decrResult));
 		});
@@ -66,4 +71,21 @@ export async function buildServer() {
 	});
 
 	return app;
+}
+
+export async function shutDown(app: any) {
+	closeWithGrace({ delay: 2000 }, async () => {
+		console.log('shutting down!');
+
+		if (connectedClients > 0) {
+			console.log(`Removing ${connectedClients} from count`);
+			const currentCount = parseInt((await publisher.get(constants.CONNECTION_COUNT_KEY)) || '0', 10);
+			const newCount = Math.max(currentCount - connectedClients, 0);
+
+			await publisher.set(constants.CONNECTION_COUNT_KEY, newCount);
+		}
+
+		await app.close();
+		console.log("Shutdown complate, Bye '_' ");
+	});
 }
